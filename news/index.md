@@ -1,0 +1,446 @@
+# Changelog
+
+## qpmR 1.1.0
+
+### Speed
+
+- A compiled (C++/RcppArmadillo) Kalman filter, used by default. It is a
+  line-for-line match of the reference implementation kept in R, down to
+  the Cholesky factorisation and Joseph-form update, and the two are
+  tested to agree to machine precision on real data, with missing
+  observations, with measurement error, and on the collinear case that
+  raises `qpm_singular_F`. Set `options(qpmR.use_cpp = FALSE)` to force
+  the R path;
+  [`qpm_use_cpp()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_use_cpp.md)
+  reports which is in use.
+- The stationary covariance is now obtained by squaring rather than by
+  vectorising to an `N^2 x N^2` system — O(N^3) per iteration instead of
+  O(N^6). This turned out to matter more than the filter: it is **39x
+  faster** on the Czech model and also speeds up
+  [`model_properties()`](https://mustapha-wasseja.github.io/qpmR/reference/model_properties.md),
+  [`qpm_rule_eval()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_rule_eval.md)
+  and
+  [`qpm_identify()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_identify.md),
+  which all solve the same equation.
+- The parameter-independent structure of the first-order system — which
+  auxiliary states are needed, the expanded state vector, and the exact
+  cell of `A`, `B`, `C` or `D` that each coefficient lands in — is now
+  computed once per model and cached on it. Estimation re-solves the
+  same equations thousands of times with different numbers, so only the
+  values are recomputed: `build_first_order()` went from 27.5 ms to 1.7
+  ms (**16x**) and
+  [`qpm_solve()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_solve.md)
+  from 37 ms to 8.3 ms. The cache is rebuilt automatically if it is
+  missing (a model serialised by an older version) or no longer matches
+  its equations. Linearity is checked once at construction rather than
+  on every solve, since it is a property of the equations.
+- Coefficient extraction reuses one evaluation environment per equation
+  instead of rebuilding it per symbol.
+- Together these take a posterior draw on the Czech model (22 states,
+  110 quarters) from 181 ms to 27 ms — **6.7x end to end**, or a
+  6000-draw estimate from about 18 minutes to under 3. The compiled
+  filter is now the largest single cost, which is where the time should
+  be: the QZ decomposition is 3.5 ms and model assembly 1.7 ms.
+- The eigenvalue table behind
+  [`eigen_table()`](https://mustapha-wasseja.github.io/qpmR/reference/eigen_table.md)
+  is assembled directly from the QZ output rather than through
+  [`data.frame()`](https://rdrr.io/r/base/data.frame.html), whose
+  constructor, reorder and row-name reset were about a fifth of a
+  posterior draw on small models even though the estimation objective
+  never reads the table. The table itself is unchanged.
+
+### New features
+
+- [`qpm_risk()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_risk.md)
+  /
+  [`risk_log()`](https://mustapha-wasseja.github.io/qpmR/reference/risk_log.md):
+  express a balance of risks. Bands become two-piece normal, so the
+  *mode* stays on the model’s projection while the *mean* shifts by the
+  stated skew and total variance is held fixed — a skew redistributes
+  risk rather than adding it. Fan charts centred on the mode, as
+  published fan charts are. Unlike
+  [`add_judgment()`](https://mustapha-wasseja.github.io/qpmR/reference/add_judgment.md),
+  which moves the projection and back-solves the supporting shocks, this
+  changes only the shape of the distribution around an unchanged path.
+- [`qpm_rule_eval()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_rule_eval.md):
+  score alternative policy rules over a grid by the unconditional loss,
+  computed exactly from the stationary covariance rather than by
+  simulation, and trace the inflation-output variability frontier. Rules
+  that fail Blanchard-Kahn are reported as indeterminate or explosive
+  rather than silently dropped.
+- [`qpm_counterfactual()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_counterfactual.md):
+  replay history with shocks switched off or scaled — “what if the
+  central bank had simply followed its rule?”. Replaying the unmodified
+  shocks reproduces the smoothed history to machine precision, which the
+  function checks.
+- [`qpm_compare_models()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_compare_models.md):
+  compare model *behaviour* (impulse responses and implied moments),
+  complementing
+  [`qpm_diff()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_diff.md),
+  which compares structure.
+- [`qpm_disaggregate()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_disaggregate.md):
+  temporal disaggregation of annual data to quarterly by Denton-Cholette
+  or Chow-Lin, both satisfying the aggregation constraint exactly — the
+  first step for the many economies that publish national accounts only
+  annually.
+- [`fevd()`](https://mustapha-wasseja.github.io/qpmR/reference/fevd.md):
+  forecast error variance decomposition — how much of each variable’s
+  forecast uncertainty each structural shock accounts for, at every
+  horizon. Shares sum to one by construction (verified to 1e-10 in the
+  tests), exogenous processes come back as entirely own-driven, and the
+  decomposition is well defined for unit-root models even though the
+  variances themselves are not.
+- [`model_properties()`](https://mustapha-wasseja.github.io/qpmR/reference/model_properties.md):
+  the standard calibration check — model-implied standard deviations and
+  autocorrelations from the stationary covariance, the shock dominating
+  each variable’s unconditional variance, and the same statistics
+  computed from data alongside, with a warning when model and data
+  volatility differ by more than a factor of two.
+- Standard R generics on qpmR objects, so nothing has to be
+  reimplemented: [`logLik()`](https://rdrr.io/r/stats/logLik.html) and
+  [`nobs()`](https://rdrr.io/r/stats/nobs.html) for filtrations and
+  estimates (which makes [`AIC()`](https://rdrr.io/r/stats/AIC.html) and
+  [`BIC()`](https://rdrr.io/r/stats/AIC.html) work),
+  [`residuals()`](https://rdrr.io/r/stats/residuals.html) (one-step
+  innovations, standardised innovations, or smoothed structural shocks)
+  and [`fitted()`](https://rdrr.io/r/stats/fitted.values.html) for
+  filtrations, [`vcov()`](https://rdrr.io/r/stats/vcov.html) and
+  [`confint()`](https://rdrr.io/r/stats/confint.html) for estimates, and
+  [`summary()`](https://rdrr.io/r/base/summary.html) methods returning
+  data frames for both.
+- [`write_dynare()`](https://mustapha-wasseja.github.io/qpmR/reference/write_dynare.md):
+  export any model as a Dynare `.mod` file. The original equations are
+  exported rather than qpmR’s internal first-order system, so Dynare
+  builds its own auxiliary variables for long leads and lags and the two
+  implementations agree only if both are right. The test suite now pins
+  qpmR’s impulse responses to golden files generated by Dynare 6.0:
+  across 4080 points (12 shocks x 17 variables x 20 quarters) the
+  largest discrepancy is 1.4e-14, and steady states agree to 8e-14. The
+  food-block model agrees to 1.7e-14, which independently validates
+  [`add_block()`](https://mustapha-wasseja.github.io/qpmR/reference/add_block.md).
+  Regenerate the golden files with `data-raw/dynare_golden.R`.
+- A pkgdown website, with the reference index organised by workflow
+  stage rather than alphabetically.
+- Test coverage is measured on every push and reported to Codecov.
+
+### Smaller changes
+
+- Printing a solved model whose stable roots are all unit roots (a pure
+  random walk) no longer reports `-Inf` as the largest stable root.
+- Conditional fan bands
+  ([`qpm_condition()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_condition.md),
+  [`add_judgment()`](https://mustapha-wasseja.github.io/qpmR/reference/add_judgment.md),
+  scenarios) are computed from the conditioned rows and the diagonal of
+  the stacked-path covariance rather than from the full `(H N) x (H N)`
+  matrix, which was the package’s one large matrix product and imposed a
+  size cap above which bands fell back to the unconditional ones. The
+  cap is gone; band values agree with the previous formula to 1e-9.
+- [`write_dynare()`](https://mustapha-wasseja.github.io/qpmR/reference/write_dynare.md)
+  no longer writes a file by default: `file = NULL` (the new default)
+  returns the Dynare source as a character vector, and a file is written
+  only when a path is given.
+  [`qpm_report()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_report.md)
+  and
+  [`save_round()`](https://mustapha-wasseja.github.io/qpmR/reference/save_round.md)
+  likewise require an output path and a store directory rather than
+  defaulting to the working directory.
+- [`qpm_estimate()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_estimate.md)
+  reports progress with
+  [`message()`](https://rdrr.io/r/base/message.html) rather than
+  [`cat()`](https://rdrr.io/r/base/cat.html), so
+  [`suppressMessages()`](https://rdrr.io/r/base/message.html) silences
+  it.
+- A `seed` given to
+  [`simulate()`](https://rdrr.io/r/stats/simulate.html) or
+  [`qpm_estimate()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_estimate.md)
+  no longer disturbs the caller’s random number stream: the previous RNG
+  state is restored on exit, as
+  [`stats::simulate()`](https://rdrr.io/r/stats/simulate.html) does for
+  linear models.
+- The Description cites the Berg, Karam and Laxton (2006) how-to guide
+  by DOI, and the slower `\donttest{}` examples were resized to run in a
+  few seconds each.
+
+## qpmR 1.0.0
+
+First stable release. The full forecasting-and-policy-analysis workflow
+now runs end to end — data, filtering, gaps, model, baseline, judgment,
+policy, scenarios, rounds, revisions, verification, report — and is
+exercised on a real quarterly dataset for Czechia shipped with the
+package.
+
+This release adds the reporting and audit layer and country-adaptation
+blocks on top of 0.4.
+
+### Reporting and audit
+
+- [`qpm_report()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_report.md):
+  turns a round into the document a policy meeting is run from —
+  executive summary with the numbers filled in, forecast table and fan
+  charts, filtered gaps, shock decomposition, the judgment ledger with
+  its implied shocks, an optional revision decomposition against the
+  previous round, and a reproducibility appendix. The `.Rmd` source is
+  always written (institutions replace the template’s text, not its
+  plumbing) and rendered to HTML/PDF/Word when pandoc or Quarto is
+  available; where neither is — air-gapped forecasting machines, bare CI
+  runners — it says so and returns the source rather than failing.
+- [`chart_pack()`](https://mustapha-wasseja.github.io/qpmR/reference/chart_pack.md):
+  the standard round chart set (forecast fans, filtered latent states,
+  shock decomposition, monetary transmission) as a multi-page PDF or
+  numbered PNGs.
+- [`verify_round()`](https://mustapha-wasseja.github.io/qpmR/reference/verify_round.md):
+  re-runs an archived round from its own contents and checks that the
+  published numbers come back, reporting the largest deviation, the
+  worst variables, and any qpmR version drift. When the round is loaded
+  from a store it also checks the human-readable CSV sidecars against
+  the object, so a hand-edited audit trail is detected.
+- Stacked-bar decomposition and revision charts leave headroom for their
+  legends.
+
+### Country adaptation
+
+- [`qpm_block()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_block.md)
+  /
+  [`add_block()`](https://mustapha-wasseja.github.io/qpmR/reference/add_block.md):
+  reusable bundles of variables, shocks, parameters and equations that
+  adapt a template to a country without forking it. Equations whose
+  left-hand side names an existing variable replace that variable’s
+  equation; equations for newly declared variables are appended. Blocks
+  compose, and each one is recorded in the model’s `meta$blocks`.
+- [`block_food_cpi()`](https://mustapha-wasseja.github.io/qpmR/reference/block_food_cpi.md):
+  headline CPI split into food and core. The Phillips curve moves to
+  core, food gets its own persistence, stronger exchange-rate
+  pass-through, and error correction on the relative food price, and
+  headline becomes the weighted identity. Food is 30-50 percent of the
+  basket across most of sub-Saharan Africa and South Asia, where a
+  single-inflation model is unusable; a food supply shock in this block
+  raises headline while leaving core essentially untouched, which is the
+  relative-price story policy should look through.
+- [`block_fx_intervention()`](https://mustapha-wasseja.github.io/qpmR/reference/block_fx_intervention.md):
+  a leaning-against-the-wind intervention rule entering the UIP block,
+  so one model spans a continuum of exchange-rate regimes —
+  `intensity = 0` reproduces the free float exactly, moderate values a
+  managed float, large values approach a peg (the peak exchange-rate
+  response to a risk-premium shock falls from 0.97 to 0.53 to 0.08
+  across those settings).
+- [`qpm_template()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_template.md)
+  gains the `"bkl_food"` and `"managed_fx"` shortcuts.
+- [`qpm_diff()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_diff.md):
+  structural comparison of two models — variables, shocks, parameters
+  and equations added, removed or changed, plus recalibrations — so a
+  country team’s customization is reviewable as a diff rather than a
+  fork.
+
+## qpmR 0.4.0
+
+The estimation layer is complete.
+
+### Identification, marginal likelihood, vignette
+
+- [`qpm_identify()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_identify.md):
+  Iskrev-style local identification diagnostics before any sampling —
+  numerical Jacobians of the solved model (solution level) and of the
+  observables’ population moments (moment level, stationary models) with
+  respect to the chosen parameters. Reports parameters with no effect,
+  rank-deficient combinations, and near-collinear pairs that are only
+  jointly identified. Unit-root models get the solution-level check with
+  an explanatory note.
+- [`marginal_likelihood()`](https://mustapha-wasseja.github.io/qpmR/reference/marginal_likelihood.md):
+  log marginal likelihood by the modified harmonic mean (Geweke 1999)
+  across truncation probabilities with a stability spread, plus a
+  Laplace approximation at the mode in transformed space as a
+  cross-check. Differences across models on the same data are log Bayes
+  factors. [`truncate()`](https://rdrr.io/r/base/seek.html) priors are
+  now renormalized numerically at construction so they contribute proper
+  densities.
+- New vignette `qpmR-estimation`: priors, the AR(1) estimation
+  laboratory, identification, Bayes factors, and the full Czech
+  estimation with its results discussed (including the honestly
+  weakly-identified policy-response coefficient).
+
+### Priors, sampler, posterior forecasts
+
+- [`priors()`](https://mustapha-wasseja.github.io/qpmR/reference/priors.md):
+  the prior mini-language. `normal()`,
+  [`beta()`](https://rdrr.io/r/base/Special.html),
+  [`gamma()`](https://rdrr.io/r/base/Special.html), `invgamma()`,
+  `uniform()`, and [`truncate()`](https://rdrr.io/r/base/seek.html)
+  exist only inside
+  [`priors()`](https://mustapha-wasseja.github.io/qpmR/reference/priors.md)
+  (evaluated in a controlled environment), so base R’s
+  [`beta()`](https://rdrr.io/r/base/Special.html) and
+  [`gamma()`](https://rdrr.io/r/base/Special.html) functions are never
+  masked. Beta/gamma/ inverse-gamma use the mean/sd parametrization
+  economists write down.
+- [`qpm_estimate()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_estimate.md):
+  Bayesian estimation of any subset of structural parameters and shock
+  standard deviations over the Kalman-filter likelihood. Posterior mode
+  in transformed (unconstrained) space, BFGS Hessian as the proposal
+  seed, adaptive random-walk Metropolis (Haario-style covariance
+  adaptation during burn-in, acceptance targeted at 0.25), multiple
+  sequential chains, split R-hat and Geyer effective sample sizes. Draws
+  violating Blanchard-Kahn get zero weight (the usual determinacy
+  truncation). `method = "mle"` reuses the machinery with flat priors on
+  the declared supports.
+- Printing reports mode, posterior mean, 90% interval, R-hat, ESS, and a
+  “learned” column comparing posterior to prior spread – a cheap
+  identification diagnostic.
+  [`plot()`](https://rdrr.io/r/graphics/plot.default.html) overlays
+  prior and posterior densities.
+  [`coef()`](https://rdrr.io/r/stats/coef.html) extracts point
+  estimates;
+  [`apply_estimate()`](https://mustapha-wasseja.github.io/qpmR/reference/apply_estimate.md)
+  recalibrates the model at them.
+- [`posterior_forecast()`](https://mustapha-wasseja.github.io/qpmR/reference/posterior_forecast.md):
+  fan charts integrating over the posterior – each draw re-solves the
+  model and re-filters the data, so the bands combine future-shock and
+  parameter uncertainty.
+- Internal: `kalman_loglik()`, a storage-free filter pass for estimation
+  speed.
+
+## qpmR 0.3.0
+
+The policy-analysis layer is complete.
+
+### Forecast rounds and revision decomposition
+
+- [`qpm_round()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_round.md):
+  one replayable artifact per forecast – model, calibration, data
+  vintage, filtration, and the conditioned forecast together.
+  \[qpm_condition()\],
+  [`qpm_scenario()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_scenario.md),
+  and
+  [`add_judgment()`](https://mustapha-wasseja.github.io/qpmR/reference/add_judgment.md)
+  apply to rounds directly.
+- [`save_round()`](https://mustapha-wasseja.github.io/qpmR/reference/save_round.md)
+  /
+  [`load_round()`](https://mustapha-wasseja.github.io/qpmR/reference/save_round.md)
+  /
+  [`list_rounds()`](https://mustapha-wasseja.github.io/qpmR/reference/save_round.md):
+  a plain-directory round store; each round is a self-contained
+  `round.rds` plus human-readable CSV sidecars (forecast, data,
+  calibration, judgment) for auditing without R.
+- [`compare_rounds()`](https://mustapha-wasseja.github.io/qpmR/reference/compare_rounds.md):
+  the revision decomposition. The forecast revision between two rounds
+  is split into parameters, data revisions, new data (outturns),
+  conditions, and judgment by re-running the full pipeline swapping one
+  ingredient at a time. Contributions telescope (they sum to the total
+  exactly); the endpoints are verified against the archived rounds, so a
+  version drift is reported rather than silently absorbed. Judgment
+  overtaken by data (a conditioned quarter that has become an outturn)
+  is dropped and reported. Waterfall printing and stacked revision
+  charts.
+- [`next_quarters()`](https://mustapha-wasseja.github.io/qpmR/reference/next_quarters.md)
+  exported for quarter-label arithmetic; formulas in models are stored
+  without environments, keeping serialized rounds small.
+
+### Conditional forecasts, scenarios, judgment
+
+- [`qpm_condition()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_condition.md):
+  hard conditional forecasts. Impose paths on any variables at any
+  horizons; qpmR backs out the minimum-norm structural shocks (in
+  standard-deviation units, optionally restricted to `instruments`) that
+  deliver them. The `anticipated` switch is explicit: `TRUE` means the
+  conditioned path is announced at the start of the forecast and
+  expectations react ahead of it, `FALSE` means period-by-period
+  surprises. Anticipated propagation uses the exact news recursion
+  `F_j = N^j Q`, `N = -(AP+B)^{-1} A`, verified in the tests against a
+  brute-force perfect-foresight solve. Fan bands are recomputed as the
+  Gaussian conditional distribution given the conditions (zero width at
+  conditioned points). Announced rate holds reproduce the
+  Laseen-Svensson (2011) anticipated-path reversal, as they should.
+- [`qpm_scenario()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_scenario.md):
+  shock-based alternative scenarios (announced or surprise), additive on
+  any forecast.
+- [`add_judgment()`](https://mustapha-wasseja.github.io/qpmR/reference/add_judgment.md)
+  /
+  [`judgment_log()`](https://mustapha-wasseja.github.io/qpmR/reference/judgment_log.md):
+  the judgment ledger. State the adjustment in percentage points; qpmR
+  back-solves the supporting shocks, keeps the forecast
+  model-consistent, records author, timestamp and rationale, and flags
+  judgment requiring shocks above two standard deviations. Entries are
+  stored as absolute targets and the full condition/judgment set is
+  re-solved jointly, so the ledger is replayable.
+- Forecasts carry quarter labels (`2026-Q3` style) inherited from the
+  filtration; conditions and judgment can be addressed by label or by
+  horizon (`h3`). Conditioned and judgment points are marked on fan
+  charts.
+
+## qpmR 0.2.0
+
+The filtration layer is complete.
+
+### Kalman filter, smoother, decompositions
+
+- [`qpm_filter()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_filter.md):
+  Kalman filter + RTS smoother over the solved model. Jointly infers
+  every latent state (output gap, neutral rate, equilibrium exchange
+  rate, trends) and the historical structural shocks from any subset of
+  observed variables, with missing data and ragged edges handled
+  naturally. Innovation diagnostics (Ljung-Box, outlier flags) are
+  computed and printed. The likelihood is tested against the exact
+  closed-form Gaussian likelihood.
+- [`qpm_decompose()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_decompose.md):
+  exact historical shock decompositions of the smoothed history
+  (additivity verified internally), with stacked-bar plots.
+- [`state_space()`](https://mustapha-wasseja.github.io/qpmR/reference/state_space.md):
+  exports the exact `T`, `R`, `Z`, `H`, `Qc`, `P1` matrices used
+  internally, so other estimators can build on qpmR.
+- [`qpm_forecast()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_forecast.md)
+  accepts a `qpm_filtration` as `from`, forecasting from the smoothed
+  end-of-sample state with the smoothed history kept for fan charts.
+
+### Diffuse initialization and unit-root trends
+
+- Models with unit roots (random-walk trends) now solve: roots within
+  `unit_tol` of the unit circle count as stable (the usual qz-criterium
+  convention) and are reported separately. Steady states with free trend
+  levels use a minimum-norm least-squares normalization; a drifted
+  random walk (no fixed point) is a typed `qpm_no_steady_state` error
+  explaining the balanced-growth limitation.
+- [`qpm_filter()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_filter.md)/[`state_space()`](https://mustapha-wasseja.github.io/qpmR/reference/state_space.md)
+  switch automatically to an approximate diffuse initialization
+  (damped-Lyapunov large-variance prior, `kappa = 1e6`) when the model
+  has unit roots. Exact Durbin-Koopman diffuse recursions remain on the
+  roadmap.
+- `qpm_template("bkl", trends = "rw")`: equilibrium real exchange rate
+  and potential growth as driftless random walks; the neutral rate stays
+  anchored by real interest parity (a free random walk there would make
+  steady-state gaps indeterminate).
+- The template gains a GDP-growth observation block
+  (`dy_obs = dy_bar + 4 * (y_gap - y_gap[-1])`), so the model filters on
+  actual national-accounts data without modelling the level of potential
+  output.
+
+### Example country dataset
+
+- `czechia`: quarterly Czech data 1996Q1 onward in model units (CPI
+  inflation QoQ and YoY, 3M PRIBOR, real CZK/EUR, GDP growth, EURIBOR,
+  euro-area HICP), compiled reproducibly by `data-raw/czechia.R` from
+  FRED/OECD/Eurostat/ECB public endpoints. Filtering it with the rw
+  template reproduces the known history: the pre-GFC boom, the 2009 and
+  2013 recessions, the COVID crater, the koruna’s trend real
+  appreciation, and the post-GFC fall in potential growth (pinned in the
+  test suite).
+
+### Smaller improvements
+
+- Filtration and decomposition charts label the time axis with period
+  labels; [`plot()`](https://rdrr.io/r/graphics/plot.default.html) on
+  decompositions gains a `periods` window argument.
+- Extended qualitative palette (no more colour recycling with many
+  shocks).
+
+## qpmR 0.1.0
+
+- Initial release: model DSL
+  ([`qpm_model()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_model.md),
+  `x[-1]` / `E(x[+1])`, automatic auxiliary states), Klein/QZ solver
+  with Blanchard-Kahn diagnostics, steady states,
+  [`irf()`](https://mustapha-wasseja.github.io/qpmR/reference/irf.md),
+  [`simulate()`](https://rdrr.io/r/stats/simulate.html),
+  [`qpm_forecast()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_forecast.md)
+  with fan bands,
+  [`qpm_lint()`](https://mustapha-wasseja.github.io/qpmR/reference/qpm_lint.md),
+  and the canonical Berg-Karam-Laxton small-open-economy template
+  `qpm_template("bkl")`.
