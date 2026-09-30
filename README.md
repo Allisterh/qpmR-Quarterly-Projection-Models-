@@ -4,6 +4,7 @@
 [![R-CMD-check](https://github.com/Mustapha-Wasseja/qpmR/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/Mustapha-Wasseja/qpmR/actions/workflows/R-CMD-check.yaml)
 [![test-coverage](https://github.com/Mustapha-Wasseja/qpmR/actions/workflows/test-coverage.yaml/badge.svg)](https://github.com/Mustapha-Wasseja/qpmR/actions/workflows/test-coverage.yaml)
 [![Lifecycle: stable](https://img.shields.io/badge/lifecycle-stable-brightgreen.svg)](https://lifecycle.r-lib.org/articles/stages.html#stable)
+[![CRAN status](https://www.r-pkg.org/badges/version/qpmR)](https://CRAN.R-project.org/package=qpmR)
 <!-- badges: end -->
 
 **Quarterly Projection Models for Monetary Policy Analysis in R.**
@@ -28,7 +29,7 @@ cross-checked against Dynare. Documentation:
 ## Installation
 
 ```r
-install.packages("qpmR")            # from CRAN, once accepted
+install.packages("qpmR")            # from CRAN
 
 # development version
 # install.packages("pak")
